@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type Config struct {
 	BybitAPISecret  string
 	BybitBaseURL    string
 	StorageDir      string
+	AdminEmails     []string
 }
 
 func Load() Config {
@@ -32,6 +34,7 @@ func Load() Config {
 		BybitAPISecret:  os.Getenv("BYBIT_API_SECRET"),
 		BybitBaseURL:    getEnv("BYBIT_BASE_URL", "https://api.bybit.com"),
 		StorageDir:      getEnv("STORAGE_DIR", "./data/uploads"),
+		AdminEmails:     splitCSV(os.Getenv("ADMIN_EMAILS")),
 	}
 }
 
@@ -40,4 +43,19 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func splitCSV(v string) []string {
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

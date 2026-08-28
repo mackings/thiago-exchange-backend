@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,10 +16,15 @@ type Service struct {
 	jwtSecret       string
 	accessTokenTTL  time.Duration
 	refreshTokenTTL time.Duration
+	adminEmails     map[string]bool
 }
 
-func NewService(users domain.UserRepository, jwtSecret string, accessTTL, refreshTTL time.Duration) *Service {
-	return &Service{users: users, jwtSecret: jwtSecret, accessTokenTTL: accessTTL, refreshTokenTTL: refreshTTL}
+func NewService(users domain.UserRepository, jwtSecret string, accessTTL, refreshTTL time.Duration, adminEmails []string) *Service {
+	set := make(map[string]bool, len(adminEmails))
+	for _, e := range adminEmails {
+		set[strings.ToLower(e)] = true
+	}
+	return &Service{users: users, jwtSecret: jwtSecret, accessTokenTTL: accessTTL, refreshTokenTTL: refreshTTL, adminEmails: set}
 }
 
 type TokenPair struct {
@@ -38,6 +44,15 @@ func (s *Service) issueTokens(u *domain.User) (TokenPair, error) {
 	return TokenPair{AccessToken: access, RefreshToken: refresh}, nil
 }
 
+// roleFor grants admin to any address on the ADMIN_EMAILS allowlist —
+// Thiago's own operators — everyone else is a regular user.
+func (s *Service) roleFor(email string) domain.Role {
+	if s.adminEmails[strings.ToLower(email)] {
+		return domain.RoleAdmin
+	}
+	return domain.RoleUser
+}
+
 func (s *Service) Register(ctx context.Context, email, phone, password, fullName string) (*domain.User, TokenPair, error) {
 	if email == "" || password == "" {
 		return nil, TokenPair{}, domain.ErrInvalidInput
@@ -52,8 +67,13 @@ func (s *Service) Register(ctx context.Context, email, phone, password, fullName
 		Phone:        phone,
 		PasswordHash: string(hash),
 		FullName:     fullName,
-		Role:         domain.RoleUser,
+		Role:         s.roleFor(email),
 		KYCStatus:    domain.KYCStatusUnverified,
+	}
+	if u.Role == domain.RoleAdmin {
+		// Admins are Thiago's own operators — auto-verify so they aren't
+		// blocked from posting ads by the KYC gate the same day they sign up.
+		u.KYCStatus = domain.KYCStatusVerified
 	}
 	if err := s.users.Create(ctx, u); err != nil {
 		return nil, TokenPair{}, err
@@ -79,6 +99,19 @@ func (s *Service) Login(ctx context.Context, email, password string) (*domain.Us
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)); err != nil {
 		return nil, TokenPair{}, domain.ErrInvalidCredentials
 	}
+
+	// Re-check the allowlist on every login so adding/removing an email from
+	// ADMIN_EMAILS takes effect without the user needing to re-register.
+	if want := s.roleFor(u.Email); want != u.Role {
+		u.Role = want
+		if want == domain.RoleAdmin {
+			u.KYCStatus = domain.KYCStatusVerified
+		}
+		if err := s.users.Update(ctx, u); err != nil {
+			return nil, TokenPair{}, err
+		}
+	}
+
 	tokens, err := s.issueTokens(u)
 	if err != nil {
 		return nil, TokenPair{}, err

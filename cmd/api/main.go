@@ -7,14 +7,10 @@ import (
 	"strconv"
 
 	"github.com/joho/godotenv"
-	"golang.org/x/crypto/bcrypt"
-
-	"github.com/google/uuid"
 
 	"thiagoexchange/backend/internal/config"
 	deliveryhttp "thiagoexchange/backend/internal/delivery/http"
 	"thiagoexchange/backend/internal/delivery/http/handlers"
-	"thiagoexchange/backend/internal/domain"
 	"thiagoexchange/backend/internal/infra/bybit"
 	"thiagoexchange/backend/internal/infra/storage"
 	"thiagoexchange/backend/internal/infra/ws"
@@ -61,7 +57,7 @@ func main() {
 	hub := ws.NewHub()
 
 	// Usecases
-	authSvc := auth.NewService(userRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	authSvc := auth.NewService(userRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.AdminEmails)
 	adsSvc := ads.NewService(adRepo, userRepo)
 	ordersSvc := orders.NewService(orderRepo, adRepo, ledgerRepo, bybitClient, bybitClient)
 	walletSvc := wallet.NewService(ledgerRepo)
@@ -69,8 +65,6 @@ func main() {
 	disputeSvc := dispute.NewService(disputeRepo, ordersSvc)
 	chatSvc := chat.NewService(orderRepo, messageRepo)
 	adminSvc := admin.NewService(userRepo, bybitClient)
-
-	seedAdmin(userRepo)
 
 	// Handlers
 	h := deliveryhttp.Handlers{
@@ -105,33 +99,4 @@ func ngnRate() float64 {
 		}
 	}
 	return 1550 // fallback reference rate, override via USD_NGN_RATE
-}
-
-// seedAdmin creates the first admin account from ADMIN_EMAIL/ADMIN_PASSWORD
-// env vars if one doesn't already exist, so there's a way into the admin
-// console without hand-editing the database.
-func seedAdmin(users domain.UserRepository) {
-	email := os.Getenv("ADMIN_EMAIL")
-	password := os.Getenv("ADMIN_PASSWORD")
-	if email == "" || password == "" {
-		return
-	}
-	ctx := context.Background()
-	if _, err := users.GetByEmail(ctx, email); err == nil {
-		return // already exists
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		log.Printf("seed admin: %v", err)
-		return
-	}
-	admin := &domain.User{
-		ID: uuid.New(), Email: email, PasswordHash: string(hash), FullName: "Admin",
-		Role: domain.RoleAdmin, KYCStatus: domain.KYCStatusVerified,
-	}
-	if err := users.Create(ctx, admin); err != nil {
-		log.Printf("seed admin: %v", err)
-		return
-	}
-	log.Printf("seeded admin account: %s", email)
 }
