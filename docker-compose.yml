@@ -1,0 +1,32 @@
+services:
+  mongo:
+    image: mongo:7
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Ledger correctness relies on real multi-document transactions, which
+  # Mongo only supports on a replica set (even a single-node one) — this
+  # one-shot container runs rs.initiate() once mongo is healthy, then exits.
+  # No auth here — this is local dev only, not exposed beyond localhost.
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # The replica set member is advertised as localhost:27017 (not the
+    # in-network "mongo" hostname) since the API normally runs on the host
+    # machine via `go run`, connecting through the published port.
+    entrypoint: >
+      mongosh --host mongo:27017 --quiet --eval
+      "try { rs.status(); } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]}); }"
+
+volumes:
+  mongodata:
