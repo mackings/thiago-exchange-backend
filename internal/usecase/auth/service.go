@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,20 +12,28 @@ import (
 	"thiagoexchange/backend/internal/domain"
 )
 
+// Mailer is the narrow email-sending capability this usecase needs.
+// Defined here (consumer-side) so the usecase doesn't depend on the
+// concrete SMTP implementation in internal/infra/mailer.
+type Mailer interface {
+	Send(to, subject, body string) error
+}
+
 type Service struct {
 	users           domain.UserRepository
 	jwtSecret       string
 	accessTokenTTL  time.Duration
 	refreshTokenTTL time.Duration
 	adminEmails     map[string]bool
+	mailer          Mailer
 }
 
-func NewService(users domain.UserRepository, jwtSecret string, accessTTL, refreshTTL time.Duration, adminEmails []string) *Service {
+func NewService(users domain.UserRepository, jwtSecret string, accessTTL, refreshTTL time.Duration, adminEmails []string, mailer Mailer) *Service {
 	set := make(map[string]bool, len(adminEmails))
 	for _, e := range adminEmails {
 		set[strings.ToLower(e)] = true
 	}
-	return &Service{users: users, jwtSecret: jwtSecret, accessTokenTTL: accessTTL, refreshTokenTTL: refreshTTL, adminEmails: set}
+	return &Service{users: users, jwtSecret: jwtSecret, accessTokenTTL: accessTTL, refreshTokenTTL: refreshTTL, adminEmails: set, mailer: mailer}
 }
 
 type TokenPair struct {
@@ -82,6 +91,12 @@ func (s *Service) Register(ctx context.Context, email, phone, password, fullName
 	if err != nil {
 		return nil, TokenPair{}, err
 	}
+
+	go func() {
+		_ = s.mailer.Send(u.Email, "Welcome to Thiago Exchange",
+			fmt.Sprintf("Hi %s,\n\nYour Thiago Exchange account is ready. Head to the Market tab to start trading.\n\n— Thiago Exchange", u.FullName))
+	}()
+
 	return u, tokens, nil
 }
 
@@ -117,6 +132,10 @@ func (s *Service) Login(ctx context.Context, email, password string) (*domain.Us
 		return nil, TokenPair{}, err
 	}
 	return u, tokens, nil
+}
+
+func (s *Service) Me(ctx context.Context, userID uuid.UUID) (*domain.User, error) {
+	return s.users.GetByID(ctx, userID)
 }
 
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (TokenPair, error) {

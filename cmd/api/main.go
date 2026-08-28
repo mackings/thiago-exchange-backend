@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -12,6 +14,7 @@ import (
 	deliveryhttp "thiagoexchange/backend/internal/delivery/http"
 	"thiagoexchange/backend/internal/delivery/http/handlers"
 	"thiagoexchange/backend/internal/infra/bybit"
+	"thiagoexchange/backend/internal/infra/mailer"
 	"thiagoexchange/backend/internal/infra/storage"
 	"thiagoexchange/backend/internal/infra/ws"
 	"thiagoexchange/backend/internal/platform/db"
@@ -55,11 +58,15 @@ func main() {
 		log.Fatalf("init storage: %v", err)
 	}
 	hub := ws.NewHub()
+	mailSvc := mailer.New(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFromName)
+	if !mailSvc.Configured() {
+		log.Println("SMTP not configured — transactional emails are disabled")
+	}
 
 	// Usecases
-	authSvc := auth.NewService(userRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.AdminEmails)
+	authSvc := auth.NewService(userRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.AdminEmails, mailSvc)
 	adsSvc := ads.NewService(adRepo, userRepo)
-	ordersSvc := orders.NewService(orderRepo, adRepo, ledgerRepo, bybitClient, bybitClient)
+	ordersSvc := orders.NewService(orderRepo, adRepo, ledgerRepo, bybitClient, bybitClient, userRepo, mailSvc)
 	walletSvc := wallet.NewService(ledgerRepo)
 	kycSvc := kyc.NewService(kycRepo, userRepo)
 	disputeSvc := dispute.NewService(disputeRepo, ordersSvc)
@@ -82,6 +89,8 @@ func main() {
 	router := deliveryhttp.NewRouter(h, cfg.JWTSecret, cfg.AllowedOrigin)
 	router.Static("/uploads", cfg.StorageDir)
 
+	startKeepAlive(os.Getenv("BACKEND_URL"))
+
 	log.Printf("thiago-exchange api listening on :%s", cfg.Port)
 	if err := router.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("server error: %v", err)
@@ -99,4 +108,25 @@ func ngnRate() float64 {
 		}
 	}
 	return 1550 // fallback reference rate, override via USD_NGN_RATE
+}
+
+// startKeepAlive pings our own /healthz every 14 minutes so Render's free
+// tier doesn't spin the service down after 15 minutes of no traffic. A
+// no-op if BACKEND_URL isn't set (e.g. local dev).
+func startKeepAlive(backendURL string) {
+	if backendURL == "" {
+		return
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	go func() {
+		for {
+			time.Sleep(14 * time.Minute)
+			resp, err := client.Get(backendURL + "/healthz")
+			if err != nil {
+				log.Printf("keep-alive ping failed: %v", err)
+				continue
+			}
+			resp.Body.Close()
+		}
+	}()
 }

@@ -22,16 +22,39 @@ type BybitTreasury interface {
 	DepositAddress(ctx context.Context, asset, chain string) (address, tag string, err error)
 }
 
+// Mailer is the narrow email-sending capability this usecase needs — see
+// usecase/auth.Mailer for the same pattern.
+type Mailer interface {
+	Send(to, subject, body string) error
+}
+
 type Service struct {
 	orders domain.OrderRepository
 	ads    domain.AdRepository
 	ledger domain.LedgerRepository
 	prices domain.PriceFeed
 	bybit  BybitTreasury
+	users  domain.UserRepository
+	mailer Mailer
 }
 
-func NewService(orders domain.OrderRepository, ads domain.AdRepository, ledger domain.LedgerRepository, prices domain.PriceFeed, bybit BybitTreasury) *Service {
-	return &Service{orders: orders, ads: ads, ledger: ledger, prices: prices, bybit: bybit}
+func NewService(orders domain.OrderRepository, ads domain.AdRepository, ledger domain.LedgerRepository, prices domain.PriceFeed, bybit BybitTreasury, users domain.UserRepository, mailer Mailer) *Service {
+	return &Service{orders: orders, ads: ads, ledger: ledger, prices: prices, bybit: bybit, users: users, mailer: mailer}
+}
+
+// notifyTaker emails whichever party on the order isn't Thiago's own
+// merchant account — best-effort, run in a goroutine by callers so a slow
+// or failing SMTP send never blocks the trading flow.
+func (s *Service) notifyTaker(order *domain.Order, subject, body string) {
+	takerID := order.BuyerID
+	if takerID == order.MerchantID {
+		takerID = order.SellerID
+	}
+	u, err := s.users.GetByID(context.Background(), takerID)
+	if err != nil {
+		return
+	}
+	_ = s.mailer.Send(u.Email, subject, body)
 }
 
 // resolveRate returns the fiat-per-unit rate to lock in for an order against
@@ -152,6 +175,10 @@ func (s *Service) Create(ctx context.Context, in CreateOrderInput) (*domain.Orde
 			return nil, err
 		}
 	}
+
+	go s.notifyTaker(order, "Order opened on Thiago Exchange",
+		fmt.Sprintf("Your order for %v %s (%v %s) is open.\n\nTrack it in the app under Orders.\n\n— Thiago Exchange",
+			order.Amount, order.Asset, order.FiatAmount, order.Fiat))
 
 	return order, nil
 }
@@ -301,7 +328,15 @@ func (s *Service) completeRelease(ctx context.Context, order *domain.Order, admi
 		}
 	}
 	order.Status = domain.OrderStatusCompleted
-	return s.orders.Update(ctx, order)
+	if err := s.orders.Update(ctx, order); err != nil {
+		return err
+	}
+
+	go s.notifyTaker(order, "Thiago Exchange order complete",
+		fmt.Sprintf("Your order for %v %s (%v %s) is complete.\n\nThanks for trading with Thiago Exchange.\n\n— Thiago Exchange",
+			order.Amount, order.Asset, order.FiatAmount, order.Fiat))
+
+	return nil
 }
 
 // Release settles the order: for a sell ad this fires the real Bybit

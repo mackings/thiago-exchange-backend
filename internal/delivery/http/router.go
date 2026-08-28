@@ -40,6 +40,7 @@ func NewRouter(h Handlers, jwtSecret, allowedOrigin string) *gin.Engine {
 
 	authed := api.Group("")
 	authed.Use(middleware.RequireAuth(jwtSecret))
+	authed.GET("/auth/me", h.Auth.Me)
 	{
 		authed.POST("/orders", h.Orders.Create)
 		authed.GET("/orders/mine", h.Orders.ListMine)

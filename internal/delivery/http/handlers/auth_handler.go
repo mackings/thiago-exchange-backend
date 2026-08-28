@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"thiagoexchange/backend/internal/delivery/http/middleware"
 	"thiagoexchange/backend/internal/domain"
 	"thiagoexchange/backend/internal/usecase/auth"
 )
@@ -105,4 +106,13 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 func (h *AuthHandler) Logout(c *gin.Context) {
 	c.SetCookie("refresh_token", "", -1, "/", "", h.secureCookies, true)
 	c.Status(http.StatusNoContent)
+}
+
+func (h *AuthHandler) Me(c *gin.Context) {
+	user, err := h.svc.Me(c.Request.Context(), middleware.CurrentUserID(c))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, toUserDTO(user))
 }
