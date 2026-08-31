@@ -32,8 +32,16 @@ type User struct {
 	Role         Role
 	KYCStatus    KYCStatus
 	Disabled     bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+
+	// Bank details admins set on their own account so buyers see a real
+	// "pay to this account" instruction on sell-ad orders instead of relying
+	// on it being typed into chat. Meaningless for non-admin users.
+	BankName          string
+	BankAccountNumber string
+	BankAccountName   string
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type UserRepository interface {
@@ -80,4 +88,23 @@ type PaymentMethodRepository interface {
 	Create(ctx context.Context, p *PaymentMethod) error
 	ListByUser(ctx context.Context, userID uuid.UUID) ([]*PaymentMethod, error)
 	Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
+}
+
+// PasswordResetToken is single-use and short-lived. TokenHash stores a
+// SHA-256 hash of the raw token that goes out in the reset email — the raw
+// token is never persisted, so a database read alone can't be used to
+// reset someone's password.
+type PasswordResetToken struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	TokenHash string
+	ExpiresAt time.Time
+	Used      bool
+	CreatedAt time.Time
+}
+
+type PasswordResetRepository interface {
+	Create(ctx context.Context, t *PasswordResetToken) error
+	GetByTokenHash(ctx context.Context, tokenHash string) (*PasswordResetToken, error)
+	MarkUsed(ctx context.Context, id uuid.UUID) error
 }

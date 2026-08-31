@@ -121,6 +121,51 @@ func (r *OrderRepo) ListByUser(ctx context.Context, userID uuid.UUID, limit, off
 	return orders, cur.Err()
 }
 
+func (r *OrderRepo) ListActive(ctx context.Context, limit, offset int) ([]*domain.Order, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	filter := bson.M{"status": bson.M{"$nin": []string{string(domain.OrderStatusCompleted), string(domain.OrderStatusCancelled)}}}
+	opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}).SetLimit(int64(limit)).SetSkip(int64(offset))
+	cur, err := r.col.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var orders []*domain.Order
+	for cur.Next(ctx) {
+		var doc orderDoc
+		if err := cur.Decode(&doc); err != nil {
+			return nil, err
+		}
+		orders = append(orders, orderFromDoc(doc))
+	}
+	return orders, cur.Err()
+}
+
+func (r *OrderRepo) ListAll(ctx context.Context, limit, offset int) ([]*domain.Order, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	opts := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}).SetLimit(int64(limit)).SetSkip(int64(offset))
+	cur, err := r.col.Find(ctx, bson.M{}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var orders []*domain.Order
+	for cur.Next(ctx) {
+		var doc orderDoc
+		if err := cur.Decode(&doc); err != nil {
+			return nil, err
+		}
+		orders = append(orders, orderFromDoc(doc))
+	}
+	return orders, cur.Err()
+}
+
 type orderMessageDoc struct {
 	ID            string    `bson:"_id"`
 	OrderID       string    `bson:"orderId"`

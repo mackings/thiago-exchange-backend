@@ -29,17 +29,19 @@ type Mailer interface {
 }
 
 type Service struct {
-	orders domain.OrderRepository
-	ads    domain.AdRepository
-	ledger domain.LedgerRepository
-	prices domain.PriceFeed
-	bybit  BybitTreasury
-	users  domain.UserRepository
-	mailer Mailer
+	orders       domain.OrderRepository
+	ads          domain.AdRepository
+	ledger       domain.LedgerRepository
+	prices       domain.PriceFeed
+	bybit        BybitTreasury
+	users        domain.UserRepository
+	mailer       Mailer
+	whitelist    domain.WhitelistRepository
+	depositAddrs domain.DepositAddressRepository
 }
 
-func NewService(orders domain.OrderRepository, ads domain.AdRepository, ledger domain.LedgerRepository, prices domain.PriceFeed, bybit BybitTreasury, users domain.UserRepository, mailer Mailer) *Service {
-	return &Service{orders: orders, ads: ads, ledger: ledger, prices: prices, bybit: bybit, users: users, mailer: mailer}
+func NewService(orders domain.OrderRepository, ads domain.AdRepository, ledger domain.LedgerRepository, prices domain.PriceFeed, bybit BybitTreasury, users domain.UserRepository, mailer Mailer, whitelist domain.WhitelistRepository, depositAddrs domain.DepositAddressRepository) *Service {
+	return &Service{orders: orders, ads: ads, ledger: ledger, prices: prices, bybit: bybit, users: users, mailer: mailer, whitelist: whitelist, depositAddrs: depositAddrs}
 }
 
 // notifyTaker emails whichever party on the order isn't Thiago's own
@@ -51,6 +53,18 @@ func (s *Service) notifyTaker(order *domain.Order, subject, body string) {
 		takerID = order.SellerID
 	}
 	u, err := s.users.GetByID(context.Background(), takerID)
+	if err != nil {
+		return
+	}
+	_ = s.mailer.Send(u.Email, subject, body)
+}
+
+// notifyMerchant emails the admin who owns the ad (the account whose Bybit
+// wallet the trade actually settles against) — used so admin learns about a
+// new sell-side order early enough to whitelist the payout address on
+// Bybit's site before release is blocked waiting on it.
+func (s *Service) notifyMerchant(order *domain.Order, subject, body string) {
+	u, err := s.users.GetByID(context.Background(), order.MerchantID)
 	if err != nil {
 		return
 	}
@@ -180,7 +194,30 @@ func (s *Service) Create(ctx context.Context, in CreateOrderInput) (*domain.Orde
 		fmt.Sprintf("Your order for %v %s (%v %s) is open.\n\nTrack it in the app under Orders.\n\n— Thiago Exchange",
 			order.Amount, order.Asset, order.FiatAmount, order.Fiat))
 
+	if ad.Side == domain.AdSideSell {
+		go s.notifyMerchantAboutPayoutAddress(order)
+	}
+
 	return order, nil
+}
+
+// notifyMerchantAboutPayoutAddress gives admin advance notice of a new
+// sell-side order's payout address, so it can be whitelisted on Bybit's
+// site (a one-time, human-confirmed step Bybit doesn't expose via API)
+// before release is blocked waiting on it.
+func (s *Service) notifyMerchantAboutPayoutAddress(order *domain.Order) {
+	ctx := context.Background()
+	whitelisted, err := s.whitelist.IsWhitelisted(ctx, order.PayoutAddress)
+	if err != nil {
+		whitelisted = false // fail open on the notification copy, not the release gate
+	}
+	status := "This address has NOT been whitelisted yet — add it to Bybit's Address Book and confirm the email link before this order can be released."
+	if whitelisted {
+		status = "This address is already whitelisted — no action needed, it'll release automatically."
+	}
+	s.notifyMerchant(order, "New order needs a payout address whitelisted",
+		fmt.Sprintf("A new order (%v %s, %v %s) will pay out to:\n\n%s (%s)\n\n%s\n\n— Thiago Exchange",
+			order.Amount, order.Asset, order.FiatAmount, order.Fiat, order.PayoutAddress, order.PayoutChain, status))
 }
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (*domain.Order, error) {
@@ -191,8 +228,23 @@ func (s *Service) ListMine(ctx context.Context, userID uuid.UUID) ([]*domain.Ord
 	return s.orders.ListByUser(ctx, userID, 0, 0)
 }
 
-// DepositInstructions returns Thiago's live Bybit deposit address for a
-// buy-side order, so the taker (seller) knows where to send the asset.
+// ListActionable is the admin verification queue: every order still in
+// flight, newest first.
+func (s *Service) ListActionable(ctx context.Context) ([]*domain.Order, error) {
+	return s.orders.ListActive(ctx, 0, 0)
+}
+
+// ListAllOrders is the admin dashboard's transactions table: every order
+// regardless of status, newest first.
+func (s *Service) ListAllOrders(ctx context.Context) ([]*domain.Order, error) {
+	return s.orders.ListAll(ctx, 0, 0)
+}
+
+// DepositInstructions returns Thiago's deposit address for a buy-side
+// order, so the taker (seller) knows where to send the asset. This is an
+// admin-set address (see SetDepositAddress), not a live Bybit API call —
+// Bybit doesn't expose a private endpoint we can safely hit without real
+// keys configured, so admin copies it once from Bybit's own deposit page.
 func (s *Service) DepositInstructions(ctx context.Context, orderID, sellerID uuid.UUID) (address, chain, tag string, err error) {
 	order, err := s.orders.GetByID(ctx, orderID)
 	if err != nil {
@@ -201,8 +253,47 @@ func (s *Service) DepositInstructions(ctx context.Context, orderID, sellerID uui
 	if order.Side != domain.AdSideBuy || order.SellerID != sellerID {
 		return "", "", "", domain.ErrForbidden
 	}
-	address, tag, err = s.bybit.DepositAddress(ctx, order.Asset, "")
-	return address, "", tag, err
+	d, err := s.depositAddrs.GetByAsset(ctx, order.Asset)
+	if err != nil {
+		return "", "", "", err
+	}
+	return d.Address, d.Chain, d.Tag, nil
+}
+
+// SetDepositAddress is how admin configures where takers should send crypto
+// for a given asset's buy ads — copied once from Bybit's own deposit page.
+func (s *Service) SetDepositAddress(ctx context.Context, asset, chain, address, tag string, adminID uuid.UUID) (*domain.DepositAddress, error) {
+	if asset == "" || address == "" {
+		return nil, domain.ErrInvalidInput
+	}
+	entry := &domain.DepositAddress{Asset: asset, Chain: chain, Address: address, Tag: tag, AddedByAdminID: adminID}
+	if err := s.depositAddrs.Upsert(ctx, entry); err != nil {
+		return nil, err
+	}
+	return entry, nil
+}
+
+func (s *Service) ListDepositAddresses(ctx context.Context) ([]*domain.DepositAddress, error) {
+	return s.depositAddrs.ListAll(ctx)
+}
+
+// PaymentInstructions returns the bank account the buyer should pay into for
+// a sell-ad order (Thiago selling) — the merchant admin's own bank details,
+// set on their profile, so the buyer sees a structured "pay to this
+// account" instruction instead of relying on it being typed into chat.
+func (s *Service) PaymentInstructions(ctx context.Context, orderID, buyerID uuid.UUID) (bankName, accountNumber, accountName string, err error) {
+	order, err := s.orders.GetByID(ctx, orderID)
+	if err != nil {
+		return "", "", "", err
+	}
+	if order.Side != domain.AdSideSell || order.BuyerID != buyerID {
+		return "", "", "", domain.ErrForbidden
+	}
+	merchant, err := s.users.GetByID(ctx, order.MerchantID)
+	if err != nil {
+		return "", "", "", err
+	}
+	return merchant.BankName, merchant.BankAccountNumber, merchant.BankAccountName, nil
 }
 
 // MarkPaid is the sell-side flow: the buyer submits proof they paid the
@@ -306,8 +397,15 @@ func (s *Service) ConfirmPayment(ctx context.Context, orderID, sellerID uuid.UUI
 // available balance with the verified deposit for buy-side orders.
 func (s *Service) completeRelease(ctx context.Context, order *domain.Order, adminID uuid.UUID) error {
 	if order.Side == domain.AdSideSell {
+		whitelisted, err := s.whitelist.IsWhitelisted(ctx, order.PayoutAddress)
+		if err != nil {
+			return err
+		}
+		if !whitelisted {
+			return domain.ErrAddressNotWhitelisted
+		}
 		if _, err := s.bybit.Withdraw(ctx, order.Asset, order.PayoutChain, order.PayoutAddress, order.Amount); err != nil {
-			return fmt.Errorf("bybit withdrawal failed, ledger not touched — likely needs the address whitelisted on Bybit first: %w", err)
+			return fmt.Errorf("bybit withdrawal failed, ledger not touched: %w", err)
 		}
 		entry := &domain.LedgerEntry{
 			ID: uuid.New(), UserID: order.MerchantID, Asset: order.Asset, Bucket: domain.BucketLocked,
@@ -445,22 +543,77 @@ func (s *Service) Cancel(ctx context.Context, orderID, actorID uuid.UUID) (*doma
 	if !domain.IsCancellable(order.Status) {
 		return nil, domain.ErrInvalidOrderState
 	}
+	if err := s.unwindCancelledOrder(ctx, order); err != nil {
+		return nil, err
+	}
+	return order, nil
+}
 
+// unwindCancelledOrder does the shared bookkeeping for taking an order out of
+// play as cancelled: unlocking any crypto the merchant had locked against it
+// (sell-side only — buy-side never locks anything up front) and giving the
+// amount back to the ad's available capacity. Shared by the user-initiated
+// Cancel and the payment-deadline auto-expiry sweep below.
+func (s *Service) unwindCancelledOrder(ctx context.Context, order *domain.Order) error {
 	if order.Side == domain.AdSideSell {
 		unlockEntries := []*domain.LedgerEntry{
 			{ID: uuid.New(), UserID: order.MerchantID, Asset: order.Asset, Bucket: domain.BucketLocked, Direction: domain.DirectionOut, Amount: order.Amount, Reason: domain.ReasonOrderCancel, OrderID: &order.ID},
 			{ID: uuid.New(), UserID: order.MerchantID, Asset: order.Asset, Bucket: domain.BucketAvailable, Direction: domain.DirectionIn, Amount: order.Amount, Reason: domain.ReasonOrderCancel, OrderID: &order.ID},
 		}
 		if err := s.ledger.CreateTx(ctx, unlockEntries); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	s.restoreAdCapacity(ctx, order)
 
 	order.Status = domain.OrderStatusCancelled
-	if err := s.orders.Update(ctx, order); err != nil {
+	return s.orders.Update(ctx, order)
+}
+
+// ExpireStale auto-cancels every still-cancellable order (created or
+// awaiting_payment — i.e. the buyer never even marked payment) whose payment
+// deadline has passed: once the window's up, the order is no longer "active"
+// and should stop tying up the ad's capacity and the merchant's locked
+// crypto. Meant to be run on a timer (see cmd/api's startExpirySweeper), not
+// called from an HTTP handler. Returns how many orders it expired.
+func (s *Service) ExpireStale(ctx context.Context) (int, error) {
+	active, err := s.orders.ListActive(ctx, 0, 0)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now()
+	expired := 0
+	for _, order := range active {
+		if !domain.IsCancellable(order.Status) || !now.After(order.PaymentDeadline) {
+			continue
+		}
+		if err := s.unwindCancelledOrder(ctx, order); err != nil {
+			return expired, fmt.Errorf("expire order %s: %w", order.ID, err)
+		}
+		expired++
+		go s.notifyTaker(order, "Thiago Exchange order expired",
+			fmt.Sprintf("Your order for %v %s (%v %s) was automatically cancelled because payment wasn't marked within the time window.\n\nFeel free to open a new order any time.\n\n— Thiago Exchange",
+				order.Amount, order.Asset, order.FiatAmount, order.Fiat))
+	}
+	return expired, nil
+}
+
+// MarkAddressWhitelisted records that admin has manually added and
+// email-confirmed address on Bybit's site — a one-time step per address
+// that Bybit itself doesn't expose an API for. Once recorded, Release stops
+// blocking on this address for every order that pays out to it.
+func (s *Service) MarkAddressWhitelisted(ctx context.Context, address, chain, asset string, adminID uuid.UUID) (*domain.WhitelistedAddress, error) {
+	if address == "" {
+		return nil, domain.ErrInvalidInput
+	}
+	entry := &domain.WhitelistedAddress{ID: uuid.New(), Address: address, Chain: chain, Asset: asset, AddedByAdminID: adminID}
+	if err := s.whitelist.Create(ctx, entry); err != nil {
 		return nil, err
 	}
-	return order, nil
+	return entry, nil
+}
+
+func (s *Service) ListWhitelist(ctx context.Context) ([]*domain.WhitelistedAddress, error) {
+	return s.whitelist.ListAll(ctx)
 }

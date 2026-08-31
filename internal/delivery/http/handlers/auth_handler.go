@@ -39,18 +39,25 @@ type authResponse struct {
 }
 
 type userDTO struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	Phone     string `json:"phone"`
-	FullName  string `json:"fullName"`
-	Role      string `json:"role"`
-	KYCStatus string `json:"kycStatus"`
+	ID                string `json:"id"`
+	Email             string `json:"email"`
+	Phone             string `json:"phone"`
+	FullName          string `json:"fullName"`
+	Role              string `json:"role"`
+	KYCStatus         string `json:"kycStatus"`
+	Disabled          bool   `json:"disabled"`
+	CreatedAt         string `json:"createdAt"`
+	BankName          string `json:"bankName,omitempty"`
+	BankAccountNumber string `json:"bankAccountNumber,omitempty"`
+	BankAccountName   string `json:"bankAccountName,omitempty"`
 }
 
 func toUserDTO(u *domain.User) userDTO {
 	return userDTO{
 		ID: u.ID.String(), Email: u.Email, Phone: u.Phone,
 		FullName: u.FullName, Role: string(u.Role), KYCStatus: string(u.KYCStatus),
+		Disabled: u.Disabled, CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		BankName: u.BankName, BankAccountNumber: u.BankAccountNumber, BankAccountName: u.BankAccountName,
 	}
 }
 
@@ -115,4 +122,63 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, toUserDTO(user))
+}
+
+type updateProfileRequest struct {
+	FullName          string `json:"fullName"`
+	Phone             string `json:"phone"`
+	BankName          string `json:"bankName"`
+	BankAccountNumber string `json:"bankAccountNumber"`
+	BankAccountName   string `json:"bankAccountName"`
+}
+
+func (h *AuthHandler) UpdateMe(c *gin.Context) {
+	var req updateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	user, err := h.svc.UpdateProfile(c.Request.Context(), middleware.CurrentUserID(c), auth.UpdateProfileInput{
+		FullName: req.FullName, Phone: req.Phone,
+		BankName: req.BankName, BankAccountNumber: req.BankAccountNumber, BankAccountName: req.BankAccountName,
+	})
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, toUserDTO(user))
+}
+
+type forgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+func (h *AuthHandler) ForgotPassword(c *gin.Context) {
+	var req forgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// Always 204, regardless of whether the email exists — see
+	// RequestPasswordReset's comment on why.
+	_ = h.svc.RequestPasswordReset(c.Request.Context(), req.Email)
+	c.Status(http.StatusNoContent)
+}
+
+type resetPasswordRequest struct {
+	Token    string `json:"token" binding:"required"`
+	Password string `json:"password" binding:"required,min=8"`
+}
+
+func (h *AuthHandler) ResetPassword(c *gin.Context) {
+	var req resetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.ResetPassword(c.Request.Context(), req.Token, req.Password); err != nil {
+		respondError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

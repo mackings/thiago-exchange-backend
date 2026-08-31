@@ -32,6 +32,8 @@ func NewRouter(h Handlers, jwtSecret, allowedOrigin string) *gin.Engine {
 	auth.POST("/login", h.Auth.Login)
 	auth.POST("/refresh", h.Auth.Refresh)
 	auth.POST("/logout", h.Auth.Logout)
+	auth.POST("/forgot-password", h.Auth.ForgotPassword)
+	auth.POST("/reset-password", h.Auth.ResetPassword)
 
 	// Public ad browsing — no auth required, matches how P2P marketplaces let
 	// anyone see rates/offers before signing up.
@@ -41,12 +43,14 @@ func NewRouter(h Handlers, jwtSecret, allowedOrigin string) *gin.Engine {
 	authed := api.Group("")
 	authed.Use(middleware.RequireAuth(jwtSecret))
 	authed.GET("/auth/me", h.Auth.Me)
+	authed.PATCH("/auth/me", h.Auth.UpdateMe)
 	{
 		authed.POST("/orders", h.Orders.Create)
 		authed.GET("/orders/mine", h.Orders.ListMine)
 		authed.GET("/orders/:id", h.Orders.Get)
 		authed.POST("/orders/:id/mark-paid", h.Orders.MarkPaid)
 		authed.GET("/orders/:id/deposit-instructions", h.Orders.DepositInstructions)
+		authed.GET("/orders/:id/payment-instructions", h.Orders.PaymentInstructions)
 		authed.POST("/orders/:id/submit-deposit", h.Orders.SubmitDeposit)
 		authed.POST("/orders/:id/confirm-payment", h.Orders.ConfirmPayment)
 		authed.POST("/orders/:id/cancel", h.Orders.Cancel)
@@ -82,8 +86,16 @@ func NewRouter(h Handlers, jwtSecret, allowedOrigin string) *gin.Engine {
 		admin.GET("/disputes", h.Dispute.ListOpen)
 		admin.POST("/disputes/:id/resolve", h.Dispute.Resolve)
 
+		admin.GET("/orders", h.Orders.AdminList)
+		admin.GET("/orders/all", h.Orders.AdminListAll)
 		admin.POST("/orders/:id/release", h.Orders.Release)
 		admin.POST("/wallet/credit", h.Wallet.AdminCredit)
+
+		admin.GET("/wallet-whitelist", h.Orders.ListWhitelist)
+		admin.POST("/wallet-whitelist", h.Orders.MarkWhitelisted)
+
+		admin.GET("/deposit-addresses", h.Orders.ListDepositAddresses)
+		admin.POST("/deposit-addresses", h.Orders.SetDepositAddress)
 	}
 
 	return r

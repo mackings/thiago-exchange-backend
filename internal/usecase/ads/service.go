@@ -85,10 +85,13 @@ func (s *Service) ListMine(ctx context.Context, ownerID uuid.UUID) ([]*domain.Ad
 }
 
 type UpdateAdInput struct {
-	Status          *domain.AdStatus
-	AvailableAmount *float64
-	FixedRate       *float64
-	Terms           *string
+	Status            *domain.AdStatus
+	AvailableAmount   *float64
+	FixedRate         *float64
+	FloatingMarginPct *float64
+	MinLimit          *float64
+	MaxLimit          *float64
+	Terms             *string
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, ownerID uuid.UUID, in UpdateAdInput) (*domain.Ad, error) {
@@ -108,8 +111,20 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, ownerID uuid.UUID, i
 	if in.FixedRate != nil {
 		ad.FixedRate = *in.FixedRate
 	}
+	if in.FloatingMarginPct != nil {
+		ad.FloatingMarginPct = *in.FloatingMarginPct
+	}
+	if in.MinLimit != nil {
+		ad.MinLimit = *in.MinLimit
+	}
+	if in.MaxLimit != nil {
+		ad.MaxLimit = *in.MaxLimit
+	}
 	if in.Terms != nil {
 		ad.Terms = *in.Terms
+	}
+	if ad.MinLimit <= 0 || ad.MaxLimit < ad.MinLimit {
+		return nil, domain.ErrInvalidInput
 	}
 	if err := s.ads.Update(ctx, ad); err != nil {
 		return nil, err

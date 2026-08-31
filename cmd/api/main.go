@@ -50,6 +50,9 @@ func main() {
 	messageRepo := mongodb.NewOrderMessageRepo(mongoDB)
 	disputeRepo := mongodb.NewDisputeRepo(mongoDB)
 	ledgerRepo := mongodb.NewLedgerRepo(mongoDB, mongoClient)
+	resetRepo := mongodb.NewPasswordResetRepo(mongoDB)
+	whitelistRepo := mongodb.NewWhitelistRepo(mongoDB)
+	depositAddressRepo := mongodb.NewDepositAddressRepo(mongoDB)
 
 	// Infra
 	bybitClient := bybit.NewClient(cfg.BybitBaseURL, cfg.BybitAPIKey, cfg.BybitAPISecret, map[string]float64{"NGN": ngnRate()})
@@ -64,9 +67,9 @@ func main() {
 	}
 
 	// Usecases
-	authSvc := auth.NewService(userRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.AdminEmails, mailSvc)
+	authSvc := auth.NewService(userRepo, resetRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.AdminEmails, mailSvc, cfg.AllowedOrigin)
 	adsSvc := ads.NewService(adRepo, userRepo)
-	ordersSvc := orders.NewService(orderRepo, adRepo, ledgerRepo, bybitClient, bybitClient, userRepo, mailSvc)
+	ordersSvc := orders.NewService(orderRepo, adRepo, ledgerRepo, bybitClient, bybitClient, userRepo, mailSvc, whitelistRepo, depositAddressRepo)
 	walletSvc := wallet.NewService(ledgerRepo)
 	kycSvc := kyc.NewService(kycRepo, userRepo)
 	disputeSvc := dispute.NewService(disputeRepo, ordersSvc)
@@ -77,7 +80,7 @@ func main() {
 	h := deliveryhttp.Handlers{
 		Auth:    handlers.NewAuthHandler(authSvc, cfg.RefreshTokenTTL, isProd()),
 		Ads:     handlers.NewAdHandler(adsSvc),
-		Orders:  handlers.NewOrderHandler(ordersSvc),
+		Orders:  handlers.NewOrderHandler(ordersSvc, userRepo),
 		Wallet:  handlers.NewWalletHandler(walletSvc),
 		KYC:     handlers.NewKYCHandler(kycSvc, localStorage),
 		Dispute: handlers.NewDisputeHandler(disputeSvc),
@@ -90,6 +93,7 @@ func main() {
 	router.Static("/uploads", cfg.StorageDir)
 
 	startKeepAlive(os.Getenv("BACKEND_URL"))
+	startExpirySweeper(ordersSvc)
 
 	log.Printf("thiago-exchange api listening on :%s", cfg.Port)
 	if err := router.Run(":" + cfg.Port); err != nil {
@@ -108,6 +112,26 @@ func ngnRate() float64 {
 		}
 	}
 	return 1550 // fallback reference rate, override via USD_NGN_RATE
+}
+
+// startExpirySweeper polls every minute for orders whose payment deadline
+// has passed while still awaiting payment, auto-cancelling them so they stop
+// counting as active trades (and free up the merchant's locked crypto / the
+// ad's capacity) without needing anyone to click Cancel.
+func startExpirySweeper(ordersSvc *orders.Service) {
+	go func() {
+		for {
+			time.Sleep(1 * time.Minute)
+			n, err := ordersSvc.ExpireStale(context.Background())
+			if err != nil {
+				log.Printf("expiry sweep failed: %v", err)
+				continue
+			}
+			if n > 0 {
+				log.Printf("expiry sweep: auto-cancelled %d order(s)", n)
+			}
+		}
+	}()
 }
 
 // startKeepAlive pings our own /healthz every 14 minutes so Render's free

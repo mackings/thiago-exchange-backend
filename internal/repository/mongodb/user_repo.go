@@ -17,23 +17,27 @@ import (
 )
 
 type userDoc struct {
-	ID           string    `bson:"_id"`
-	Email        string    `bson:"email"`
-	Phone        string    `bson:"phone"`
-	PasswordHash string    `bson:"passwordHash"`
-	FullName     string    `bson:"fullName"`
-	Role         string    `bson:"role"`
-	KYCStatus    string    `bson:"kycStatus"`
-	Disabled     bool      `bson:"disabled"`
-	CreatedAt    time.Time `bson:"createdAt"`
-	UpdatedAt    time.Time `bson:"updatedAt"`
+	ID                string    `bson:"_id"`
+	Email             string    `bson:"email"`
+	Phone             string    `bson:"phone"`
+	PasswordHash      string    `bson:"passwordHash"`
+	FullName          string    `bson:"fullName"`
+	Role              string    `bson:"role"`
+	KYCStatus         string    `bson:"kycStatus"`
+	Disabled          bool      `bson:"disabled"`
+	BankName          string    `bson:"bankName,omitempty"`
+	BankAccountNumber string    `bson:"bankAccountNumber,omitempty"`
+	BankAccountName   string    `bson:"bankAccountName,omitempty"`
+	CreatedAt         time.Time `bson:"createdAt"`
+	UpdatedAt         time.Time `bson:"updatedAt"`
 }
 
 func userToDoc(u *domain.User) userDoc {
 	return userDoc{
 		ID: u.ID.String(), Email: u.Email, Phone: u.Phone, PasswordHash: u.PasswordHash,
 		FullName: u.FullName, Role: string(u.Role), KYCStatus: string(u.KYCStatus),
-		Disabled: u.Disabled, CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
+		Disabled: u.Disabled, BankName: u.BankName, BankAccountNumber: u.BankAccountNumber,
+		BankAccountName: u.BankAccountName, CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
 	}
 }
 
@@ -42,7 +46,8 @@ func userFromDoc(d userDoc) *domain.User {
 	return &domain.User{
 		ID: id, Email: d.Email, Phone: d.Phone, PasswordHash: d.PasswordHash,
 		FullName: d.FullName, Role: domain.Role(d.Role), KYCStatus: domain.KYCStatus(d.KYCStatus),
-		Disabled: d.Disabled, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+		Disabled: d.Disabled, BankName: d.BankName, BankAccountNumber: d.BankAccountNumber,
+		BankAccountName: d.BankAccountName, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
 }
 

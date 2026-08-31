@@ -123,10 +123,13 @@ func (h *AdHandler) ListMine(c *gin.Context) {
 }
 
 type updateAdRequest struct {
-	Status          *string  `json:"status"`
-	AvailableAmount *float64 `json:"availableAmount"`
-	FixedRate       *float64 `json:"fixedRate"`
-	Terms           *string  `json:"terms"`
+	Status            *string  `json:"status"`
+	AvailableAmount   *float64 `json:"availableAmount"`
+	FixedRate         *float64 `json:"fixedRate"`
+	FloatingMarginPct *float64 `json:"floatingMarginPct"`
+	MinLimit          *float64 `json:"minLimit"`
+	MaxLimit          *float64 `json:"maxLimit"`
+	Terms             *string  `json:"terms"`
 }
 
 func (h *AdHandler) Update(c *gin.Context) {
@@ -140,7 +143,14 @@ func (h *AdHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	in := ads.UpdateAdInput{AvailableAmount: req.AvailableAmount, FixedRate: req.FixedRate, Terms: req.Terms}
+	in := ads.UpdateAdInput{
+		AvailableAmount:   req.AvailableAmount,
+		FixedRate:         req.FixedRate,
+		FloatingMarginPct: req.FloatingMarginPct,
+		MinLimit:          req.MinLimit,
+		MaxLimit:          req.MaxLimit,
+		Terms:             req.Terms,
+	}
 	if req.Status != nil {
 		s := domain.AdStatus(*req.Status)
 		in.Status = &s

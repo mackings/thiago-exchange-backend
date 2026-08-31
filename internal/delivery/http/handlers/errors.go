@@ -34,6 +34,10 @@ func respondError(c *gin.Context, err error) {
 		status = http.StatusConflict
 	case errors.Is(err, domain.ErrDepositNotFound):
 		status = http.StatusNotFound
+	case errors.Is(err, domain.ErrAddressNotWhitelisted):
+		status = http.StatusConflict
+	case errors.Is(err, domain.ErrDepositAddressNotSet):
+		status = http.StatusConflict
 	}
 	c.JSON(status, gin.H{"error": err.Error()})
 }
