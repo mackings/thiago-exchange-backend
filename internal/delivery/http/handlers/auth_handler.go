@@ -63,6 +63,18 @@ func toUserDTO(u *domain.User) userDTO {
 }
 
 func (h *AuthHandler) setRefreshCookie(c *gin.Context, token string) {
+	// The frontend (thiagotrade.com.ng) and this API (onrender.com) are
+	// different registrable domains in production, so the browser only ever
+	// sends this cookie on the refresh fetch() call — which is cross-site —
+	// if SameSite is explicitly None. Left at the default (effectively Lax),
+	// the cookie gets set on login but never actually sent back, so refresh
+	// silently fails after any full-page navigation and the session never
+	// loads. None requires Secure, which is exactly when we'd set it here —
+	// local dev (http, not secure) stays on the Lax default, which is fine
+	// since localhost:3000/localhost:8080 count as the same site.
+	if h.secureCookies {
+		c.SetSameSite(http.SameSiteNoneMode)
+	}
 	c.SetCookie("refresh_token", token, int(h.refreshTokenTTL.Seconds()), "/", "", h.secureCookies, true)
 }
 
@@ -112,6 +124,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
+	// Must match setRefreshCookie's SameSite so the browser recognizes this
+	// as clearing the same cookie rather than setting an unrelated one.
+	if h.secureCookies {
+		c.SetSameSite(http.SameSiteNoneMode)
+	}
 	c.SetCookie("refresh_token", "", -1, "/", "", h.secureCookies, true)
 	c.Status(http.StatusNoContent)
 }
