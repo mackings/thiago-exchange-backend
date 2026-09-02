@@ -38,6 +38,8 @@ func respondError(c *gin.Context, err error) {
 		status = http.StatusConflict
 	case errors.Is(err, domain.ErrDepositAddressNotSet):
 		status = http.StatusConflict
+	case errors.Is(err, domain.ErrEmailNotVerified):
+		status = http.StatusForbidden
 	}
 	c.JSON(status, gin.H{"error": err.Error()})
 }

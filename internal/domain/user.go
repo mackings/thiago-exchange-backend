@@ -33,6 +33,11 @@ type User struct {
 	KYCStatus    KYCStatus
 	Disabled     bool
 
+	// EmailVerified gates trading (see orders.Service.Create), not login —
+	// an unverified user can still browse and sign in, matching how KYC
+	// gates trade limits rather than account access.
+	EmailVerified bool
+
 	// Bank details admins set on their own account so buyers see a real
 	// "pay to this account" instruction on sell-ad orders instead of relying
 	// on it being typed into chat. Meaningless for non-admin users.
@@ -106,5 +111,22 @@ type PasswordResetToken struct {
 type PasswordResetRepository interface {
 	Create(ctx context.Context, t *PasswordResetToken) error
 	GetByTokenHash(ctx context.Context, tokenHash string) (*PasswordResetToken, error)
+	MarkUsed(ctx context.Context, id uuid.UUID) error
+}
+
+// EmailVerificationToken follows the same single-use, short-lived,
+// hash-only-at-rest shape as PasswordResetToken above.
+type EmailVerificationToken struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	TokenHash string
+	ExpiresAt time.Time
+	Used      bool
+	CreatedAt time.Time
+}
+
+type EmailVerificationRepository interface {
+	Create(ctx context.Context, t *EmailVerificationToken) error
+	GetByTokenHash(ctx context.Context, tokenHash string) (*EmailVerificationToken, error)
 	MarkUsed(ctx context.Context, id uuid.UUID) error
 }

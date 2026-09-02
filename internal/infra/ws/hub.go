@@ -19,12 +19,13 @@ type Client struct {
 }
 
 type Hub struct {
-	mu    sync.RWMutex
-	rooms map[uuid.UUID]map[*Client]bool
+	mu     sync.RWMutex
+	rooms  map[uuid.UUID]map[*Client]bool
+	admins map[*Client]bool
 }
 
 func NewHub() *Hub {
-	return &Hub{rooms: make(map[uuid.UUID]map[*Client]bool)}
+	return &Hub{rooms: make(map[uuid.UUID]map[*Client]bool), admins: make(map[*Client]bool)}
 }
 
 func (h *Hub) Register(c *Client) {
@@ -57,6 +58,37 @@ func (h *Hub) Broadcast(orderID uuid.UUID, message []byte) {
 		case c.Send <- message:
 		default:
 			// slow consumer, drop rather than block the broadcaster
+		}
+	}
+}
+
+// RegisterAdmin/UnregisterAdmin/BroadcastAdmins back a separate, order-agnostic
+// channel: admin's console holds one persistent connection here for as long
+// as they're on the admin pages, so they get notified of a new trader
+// message on ANY order — not just the one room they might currently have
+// open — which is what actually lets them notice and respond promptly.
+func (h *Hub) RegisterAdmin(c *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.admins[c] = true
+}
+
+func (h *Hub) UnregisterAdmin(c *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.admins[c] {
+		delete(h.admins, c)
+		close(c.Send)
+	}
+}
+
+func (h *Hub) BroadcastAdmins(message []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.admins {
+		select {
+		case c.Send <- message:
+		default:
 		}
 	}
 }

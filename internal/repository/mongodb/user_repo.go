@@ -25,6 +25,7 @@ type userDoc struct {
 	Role              string    `bson:"role"`
 	KYCStatus         string    `bson:"kycStatus"`
 	Disabled          bool      `bson:"disabled"`
+	EmailVerified     bool      `bson:"emailVerified"`
 	BankName          string    `bson:"bankName,omitempty"`
 	BankAccountNumber string    `bson:"bankAccountNumber,omitempty"`
 	BankAccountName   string    `bson:"bankAccountName,omitempty"`
@@ -36,7 +37,7 @@ func userToDoc(u *domain.User) userDoc {
 	return userDoc{
 		ID: u.ID.String(), Email: u.Email, Phone: u.Phone, PasswordHash: u.PasswordHash,
 		FullName: u.FullName, Role: string(u.Role), KYCStatus: string(u.KYCStatus),
-		Disabled: u.Disabled, BankName: u.BankName, BankAccountNumber: u.BankAccountNumber,
+		Disabled: u.Disabled, EmailVerified: u.EmailVerified, BankName: u.BankName, BankAccountNumber: u.BankAccountNumber,
 		BankAccountName: u.BankAccountName, CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
 	}
 }
@@ -46,7 +47,7 @@ func userFromDoc(d userDoc) *domain.User {
 	return &domain.User{
 		ID: id, Email: d.Email, Phone: d.Phone, PasswordHash: d.PasswordHash,
 		FullName: d.FullName, Role: domain.Role(d.Role), KYCStatus: domain.KYCStatus(d.KYCStatus),
-		Disabled: d.Disabled, BankName: d.BankName, BankAccountNumber: d.BankAccountNumber,
+		Disabled: d.Disabled, EmailVerified: d.EmailVerified, BankName: d.BankName, BankAccountNumber: d.BankAccountNumber,
 		BankAccountName: d.BankAccountName, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
 }

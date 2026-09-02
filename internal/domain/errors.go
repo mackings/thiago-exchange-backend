@@ -15,4 +15,5 @@ var (
 	ErrDepositNotFound       = errors.New("no matching confirmed deposit found yet")
 	ErrAddressNotWhitelisted = errors.New("payout address is not whitelisted on Bybit yet")
 	ErrDepositAddressNotSet  = errors.New("deposit address has not been set for this asset yet")
+	ErrEmailNotVerified      = errors.New("verify your email before trading")
 )

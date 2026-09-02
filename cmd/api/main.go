@@ -51,6 +51,7 @@ func main() {
 	disputeRepo := mongodb.NewDisputeRepo(mongoDB)
 	ledgerRepo := mongodb.NewLedgerRepo(mongoDB, mongoClient)
 	resetRepo := mongodb.NewPasswordResetRepo(mongoDB)
+	verificationRepo := mongodb.NewEmailVerificationRepo(mongoDB)
 	whitelistRepo := mongodb.NewWhitelistRepo(mongoDB)
 	depositAddressRepo := mongodb.NewDepositAddressRepo(mongoDB)
 
@@ -67,7 +68,7 @@ func main() {
 	}
 
 	// Usecases
-	authSvc := auth.NewService(userRepo, resetRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.AdminEmails, mailSvc, cfg.AllowedOrigin)
+	authSvc := auth.NewService(userRepo, resetRepo, verificationRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.AdminEmails, mailSvc, cfg.AllowedOrigin)
 	adsSvc := ads.NewService(adRepo, userRepo)
 	ordersSvc := orders.NewService(orderRepo, adRepo, ledgerRepo, bybitClient, bybitClient, userRepo, mailSvc, whitelistRepo, depositAddressRepo)
 	walletSvc := wallet.NewService(ledgerRepo)
@@ -85,7 +86,7 @@ func main() {
 		KYC:     handlers.NewKYCHandler(kycSvc, localStorage),
 		Dispute: handlers.NewDisputeHandler(disputeSvc),
 		Admin:   handlers.NewAdminHandler(adminSvc),
-		Chat:    handlers.NewChatHandler(chatSvc, hub, cfg.AllowedOrigin),
+		Chat:    handlers.NewChatHandler(chatSvc, hub, userRepo, cfg.AllowedOrigin),
 		Upload:  handlers.NewUploadHandler(localStorage),
 	}
 

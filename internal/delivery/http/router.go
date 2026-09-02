@@ -34,6 +34,8 @@ func NewRouter(h Handlers, jwtSecret, allowedOrigin string) *gin.Engine {
 	auth.POST("/logout", h.Auth.Logout)
 	auth.POST("/forgot-password", h.Auth.ForgotPassword)
 	auth.POST("/reset-password", h.Auth.ResetPassword)
+	auth.POST("/verify-email", h.Auth.VerifyEmail)
+	auth.POST("/resend-verification", h.Auth.ResendVerification)
 
 	// Public ad browsing — no auth required, matches how P2P marketplaces let
 	// anyone see rates/offers before signing up.
@@ -96,6 +98,8 @@ func NewRouter(h Handlers, jwtSecret, allowedOrigin string) *gin.Engine {
 
 		admin.GET("/deposit-addresses", h.Orders.ListDepositAddresses)
 		admin.POST("/deposit-addresses", h.Orders.SetDepositAddress)
+
+		admin.GET("/notifications/ws", h.Chat.StreamNotifications)
 	}
 
 	return r

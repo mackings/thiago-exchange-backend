@@ -19,12 +19,13 @@ import (
 type ChatHandler struct {
 	svc      *chat.Service
 	hub      *ws.Hub
+	users    domain.UserRepository
 	upgrader websocket.Upgrader
 }
 
-func NewChatHandler(svc *chat.Service, hub *ws.Hub, allowedOrigin string) *ChatHandler {
+func NewChatHandler(svc *chat.Service, hub *ws.Hub, users domain.UserRepository, allowedOrigin string) *ChatHandler {
 	return &ChatHandler{
-		svc: svc, hub: hub,
+		svc: svc, hub: hub, users: users,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == allowedOrigin },
 		},
@@ -111,7 +112,7 @@ func (h *ChatHandler) readPump(client *ws.Client) {
 		if err := json.Unmarshal(raw, &in); err != nil {
 			continue
 		}
-		msg, err := h.svc.Send(context.Background(), client.OrderID, client.UserID, in.Body, in.AttachmentURL)
+		msg, order, err := h.svc.Send(context.Background(), client.OrderID, client.UserID, in.Body, in.AttachmentURL)
 		if err != nil {
 			log.Printf("chat: send failed: %v", err)
 			continue
@@ -121,12 +122,73 @@ func (h *ChatHandler) readPump(client *ws.Client) {
 			continue
 		}
 		h.hub.Broadcast(client.OrderID, payload)
+
+		// The merchant side of every order is Thiago's own admin account —
+		// a message from the OTHER side is always the trader, which is the
+		// case admin actually needs paging for (their own messages, sent
+		// from the compact chat embedded in the admin console, obviously
+		// don't need to notify admin).
+		if client.UserID != order.MerchantID {
+			h.notifyAdmins(order, msg)
+		}
 	}
+}
+
+func (h *ChatHandler) notifyAdmins(order *domain.Order, msg *domain.OrderMessage) {
+	senderName := "Trader"
+	if u, err := h.users.GetByID(context.Background(), msg.SenderID); err == nil {
+		senderName = u.FullName
+	}
+	preview := msg.Body
+	if preview == "" && msg.AttachmentURL != "" {
+		preview = "Sent an attachment"
+	}
+	payload, err := json.Marshal(adminNotificationDTO{
+		Type: "new_message", OrderID: order.ID.String(), SenderName: senderName,
+		Preview: preview, Asset: order.Asset, Amount: order.Amount,
+	})
+	if err != nil {
+		return
+	}
+	h.hub.BroadcastAdmins(payload)
 }
 
 func (h *ChatHandler) writePump(client *ws.Client) {
 	for msg := range client.Send {
 		if err := client.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			return
+		}
+	}
+}
+
+type adminNotificationDTO struct {
+	Type       string  `json:"type"`
+	OrderID    string  `json:"orderId"`
+	SenderName string  `json:"senderName"`
+	Preview    string  `json:"preview"`
+	Asset      string  `json:"asset"`
+	Amount     float64 `json:"amount"`
+}
+
+// StreamNotifications is a single, order-agnostic WebSocket admin holds open
+// for as long as they're on the admin console — see Hub's admin-broadcast
+// comment for why this is a separate channel from the per-order rooms.
+// Role is already enforced by the router's admin group middleware.
+func (h *ChatHandler) StreamNotifications(c *gin.Context) {
+	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+	client := &ws.Client{Conn: conn, UserID: middleware.CurrentUserID(c), Send: make(chan []byte, 16)}
+	h.hub.RegisterAdmin(client)
+
+	go h.writePump(client)
+	// No inbound messages expected on this channel — just block reading
+	// until the connection drops, so we notice and unregister.
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			h.hub.UnregisterAdmin(client)
+			conn.Close()
 			return
 		}
 	}

@@ -46,6 +46,7 @@ type userDTO struct {
 	Role              string `json:"role"`
 	KYCStatus         string `json:"kycStatus"`
 	Disabled          bool   `json:"disabled"`
+	EmailVerified     bool   `json:"emailVerified"`
 	CreatedAt         string `json:"createdAt"`
 	BankName          string `json:"bankName,omitempty"`
 	BankAccountNumber string `json:"bankAccountNumber,omitempty"`
@@ -56,7 +57,7 @@ func toUserDTO(u *domain.User) userDTO {
 	return userDTO{
 		ID: u.ID.String(), Email: u.Email, Phone: u.Phone,
 		FullName: u.FullName, Role: string(u.Role), KYCStatus: string(u.KYCStatus),
-		Disabled: u.Disabled, CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		Disabled: u.Disabled, EmailVerified: u.EmailVerified, CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		BankName: u.BankName, BankAccountNumber: u.BankAccountNumber, BankAccountName: u.BankAccountName,
 	}
 }
@@ -180,5 +181,37 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
+	c.Status(http.StatusNoContent)
+}
+
+type verifyEmailRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+func (h *AuthHandler) VerifyEmail(c *gin.Context) {
+	var req verifyEmailRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.VerifyEmail(c.Request.Context(), req.Token); err != nil {
+		respondError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+type resendVerificationRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+func (h *AuthHandler) ResendVerification(c *gin.Context) {
+	var req resendVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// Always 204 — see ResendVerification's comment on why.
+	_ = h.svc.ResendVerification(c.Request.Context(), req.Email)
 	c.Status(http.StatusNoContent)
 }

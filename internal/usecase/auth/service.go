@@ -22,11 +22,15 @@ type Mailer interface {
 	Send(to, subject, body string) error
 }
 
-const passwordResetTTL = 1 * time.Hour
+const (
+	passwordResetTTL     = 1 * time.Hour
+	emailVerificationTTL = 24 * time.Hour
+)
 
 type Service struct {
 	users           domain.UserRepository
 	resets          domain.PasswordResetRepository
+	verifications   domain.EmailVerificationRepository
 	jwtSecret       string
 	accessTokenTTL  time.Duration
 	refreshTokenTTL time.Duration
@@ -38,6 +42,7 @@ type Service struct {
 func NewService(
 	users domain.UserRepository,
 	resets domain.PasswordResetRepository,
+	verifications domain.EmailVerificationRepository,
 	jwtSecret string,
 	accessTTL, refreshTTL time.Duration,
 	adminEmails []string,
@@ -49,7 +54,7 @@ func NewService(
 		set[strings.ToLower(e)] = true
 	}
 	return &Service{
-		users: users, resets: resets, jwtSecret: jwtSecret, accessTokenTTL: accessTTL, refreshTokenTTL: refreshTTL,
+		users: users, resets: resets, verifications: verifications, jwtSecret: jwtSecret, accessTokenTTL: accessTTL, refreshTokenTTL: refreshTTL,
 		adminEmails: set, mailer: mailer, frontendURL: frontendURL,
 	}
 }
@@ -98,9 +103,11 @@ func (s *Service) Register(ctx context.Context, email, phone, password, fullName
 		KYCStatus:    domain.KYCStatusUnverified,
 	}
 	if u.Role == domain.RoleAdmin {
-		// Admins are Thiago's own operators — auto-verify so they aren't
-		// blocked from posting ads by the KYC gate the same day they sign up.
+		// Admins are Thiago's own operators — auto-verify both gates so
+		// they aren't blocked from posting ads or trading the same day
+		// they sign up.
 		u.KYCStatus = domain.KYCStatusVerified
+		u.EmailVerified = true
 	}
 	if err := s.users.Create(ctx, u); err != nil {
 		return nil, TokenPair{}, err
@@ -110,12 +117,74 @@ func (s *Service) Register(ctx context.Context, email, phone, password, fullName
 		return nil, TokenPair{}, err
 	}
 
-	go func() {
-		_ = s.mailer.Send(u.Email, "Welcome to Thiago Exchange",
-			fmt.Sprintf("Hi %s,\n\nYour Thiago Exchange account is ready. Head to the Market tab to start trading.\n\n— Thiago Exchange", u.FullName))
-	}()
+	if u.EmailVerified {
+		go func() {
+			_ = s.mailer.Send(u.Email, "Welcome to Thiago Exchange",
+				fmt.Sprintf("Hi %s,\n\nYour Thiago Exchange account is ready. Head to the Market tab to start trading.\n\n— Thiago Exchange", u.FullName))
+		}()
+	} else {
+		go s.sendVerificationEmail(u)
+	}
 
 	return u, tokens, nil
+}
+
+// sendVerificationEmail issues a fresh token and emails the verify link. The
+// email doubles as the welcome email for a brand-new account — there's no
+// separate "welcome" send for unverified users, just this one with the
+// action they actually need to take.
+func (s *Service) sendVerificationEmail(u *domain.User) {
+	ctx := context.Background()
+	rawToken, err := randomToken()
+	if err != nil {
+		return
+	}
+	token := &domain.EmailVerificationToken{
+		ID: uuid.New(), UserID: u.ID, TokenHash: hashToken(rawToken),
+		ExpiresAt: time.Now().Add(emailVerificationTTL),
+	}
+	if err := s.verifications.Create(ctx, token); err != nil {
+		return
+	}
+	link := fmt.Sprintf("%s/verify-email?token=%s", strings.TrimSuffix(s.frontendURL, "/"), rawToken)
+	_ = s.mailer.Send(u.Email, "Verify your email — Thiago Exchange",
+		fmt.Sprintf("Hi %s,\n\nWelcome to Thiago Exchange. Verify your email to start trading (link valid for 24 hours):\n%s\n\nIf you didn't create this account, you can ignore this email.\n\n— Thiago Exchange", u.FullName, link))
+}
+
+// VerifyEmail marks the token's owner verified. Returns the user so the
+// caller can decide what to do next (e.g. nothing — the frontend just shows
+// a success state and the user logs in normally).
+func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
+	token, err := s.verifications.GetByTokenHash(ctx, hashToken(rawToken))
+	if err != nil {
+		return domain.ErrInvalidInput
+	}
+	if token.Used || time.Now().After(token.ExpiresAt) {
+		return domain.ErrInvalidInput
+	}
+	u, err := s.users.GetByID(ctx, token.UserID)
+	if err != nil {
+		return err
+	}
+	if !u.EmailVerified {
+		u.EmailVerified = true
+		if err := s.users.Update(ctx, u); err != nil {
+			return err
+		}
+	}
+	return s.verifications.MarkUsed(ctx, token.ID)
+}
+
+// ResendVerification always succeeds from the caller's perspective, whether
+// or not the email exists or is already verified — same anti-enumeration
+// reasoning as RequestPasswordReset.
+func (s *Service) ResendVerification(ctx context.Context, email string) error {
+	u, err := s.users.GetByEmail(ctx, email)
+	if err != nil || u.EmailVerified {
+		return nil
+	}
+	go s.sendVerificationEmail(u)
+	return nil
 }
 
 func (s *Service) Login(ctx context.Context, email, password string) (*domain.User, TokenPair, error) {

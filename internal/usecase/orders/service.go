@@ -114,6 +114,13 @@ func (s *Service) Create(ctx context.Context, in CreateOrderInput) (*domain.Orde
 	if ad.OwnerID == in.TakerID {
 		return nil, domain.ErrInvalidInput
 	}
+	taker, err := s.users.GetByID(ctx, in.TakerID)
+	if err != nil {
+		return nil, err
+	}
+	if !taker.EmailVerified {
+		return nil, domain.ErrEmailNotVerified
+	}
 	if in.AssetAmount <= 0 || in.AssetAmount > ad.AvailableAmount {
 		return nil, domain.ErrInvalidInput
 	}

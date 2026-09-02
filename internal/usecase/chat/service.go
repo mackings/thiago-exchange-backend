@@ -37,12 +37,16 @@ func (s *Service) History(ctx context.Context, orderID, userID uuid.UUID) ([]*do
 	return s.messages.ListByOrder(ctx, orderID)
 }
 
-func (s *Service) Send(ctx context.Context, orderID, senderID uuid.UUID, body, attachmentURL string) (*domain.OrderMessage, error) {
-	if _, err := s.assertParticipant(ctx, orderID, senderID); err != nil {
-		return nil, err
+// Send also returns the order — callers (the WS handler) use it to decide
+// whether the message came from the trader side and is worth surfacing as
+// an admin notification.
+func (s *Service) Send(ctx context.Context, orderID, senderID uuid.UUID, body, attachmentURL string) (*domain.OrderMessage, *domain.Order, error) {
+	order, err := s.assertParticipant(ctx, orderID, senderID)
+	if err != nil {
+		return nil, nil, err
 	}
 	if body == "" && attachmentURL == "" {
-		return nil, domain.ErrInvalidInput
+		return nil, nil, domain.ErrInvalidInput
 	}
 	msg := &domain.OrderMessage{
 		ID:            uuid.New(),
@@ -52,7 +56,7 @@ func (s *Service) Send(ctx context.Context, orderID, senderID uuid.UUID, body, a
 		AttachmentURL: attachmentURL,
 	}
 	if err := s.messages.Create(ctx, msg); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return msg, nil
+	return msg, order, nil
 }
