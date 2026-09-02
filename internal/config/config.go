@@ -19,11 +19,8 @@ type Config struct {
 	BybitBaseURL    string
 	StorageDir      string
 	AdminEmails     []string
-	SMTPHost        string
-	SMTPPort        string
-	SMTPUser        string
-	SMTPPass        string
-	SMTPFromName    string
+	ResendAPIKey    string
+	ResendFromEmail string
 }
 
 func Load() Config {
@@ -40,11 +37,8 @@ func Load() Config {
 		BybitBaseURL:    getEnv("BYBIT_BASE_URL", "https://api.bybit.com"),
 		StorageDir:      getEnv("STORAGE_DIR", "./data/uploads"),
 		AdminEmails:     splitCSV(os.Getenv("ADMIN_EMAILS")),
-		SMTPHost:        getEnv("SMTP_HOST", "smtp.gmail.com"),
-		SMTPPort:        getEnv("SMTP_PORT", "587"),
-		SMTPUser:        os.Getenv("SMTP_USER"),
-		SMTPPass:        os.Getenv("SMTP_PASS"),
-		SMTPFromName:    getEnv("SMTP_FROM_NAME", "Thiago Exchange"),
+		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
+		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Thiago Exchange <noreply@thiagotrade.com.ng>"),
 	}
 }
 

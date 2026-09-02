@@ -61,9 +61,9 @@ func main() {
 		log.Fatalf("init storage: %v", err)
 	}
 	hub := ws.NewHub()
-	mailSvc := mailer.New(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFromName)
+	mailSvc := mailer.New(cfg.ResendAPIKey, cfg.ResendFromEmail)
 	if !mailSvc.Configured() {
-		log.Println("SMTP not configured — transactional emails are disabled")
+		log.Println("RESEND_API_KEY not set — transactional emails are disabled")
 	}
 
 	// Usecases
