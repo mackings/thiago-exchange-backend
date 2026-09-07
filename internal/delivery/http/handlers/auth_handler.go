@@ -34,8 +34,15 @@ type loginRequest struct {
 }
 
 type authResponse struct {
-	User        userDTO `json:"user"`
-	AccessToken string  `json:"accessToken"`
+	User         userDTO `json:"user"`
+	AccessToken  string  `json:"accessToken"`
+	// RefreshToken is also returned in the body (not just the cookie) so the
+	// frontend can store it itself and send it back explicitly on refresh —
+	// the cookie alone doesn't survive when frontend and API are on
+	// different registrable domains, since browsers (Safari especially)
+	// block that as a third-party cookie regardless of SameSite=None. See
+	// AuthHandler.Refresh for the corresponding fallback.
+	RefreshToken string `json:"refreshToken"`
 }
 
 type userDTO struct {
@@ -90,7 +97,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 	h.setRefreshCookie(c, tokens.RefreshToken)
-	c.JSON(http.StatusCreated, authResponse{User: toUserDTO(user), AccessToken: tokens.AccessToken})
+	c.JSON(http.StatusCreated, authResponse{User: toUserDTO(user), AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken})
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -105,12 +112,25 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	h.setRefreshCookie(c, tokens.RefreshToken)
-	c.JSON(http.StatusOK, authResponse{User: toUserDTO(user), AccessToken: tokens.AccessToken})
+	c.JSON(http.StatusOK, authResponse{User: toUserDTO(user), AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken})
+}
+
+type refreshRequest struct {
+	// Optional — only needed when the cookie didn't make it back (see
+	// authResponse.RefreshToken). Cookie wins when both are present so a
+	// same-site deployment (local dev, or same-registrable-domain in
+	// production) still gets the HttpOnly-cookie security benefit.
+	RefreshToken string `json:"refreshToken"`
 }
 
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	refreshToken, err := c.Cookie("refresh_token")
 	if err != nil || refreshToken == "" {
+		var req refreshRequest
+		_ = c.ShouldBindJSON(&req)
+		refreshToken = req.RefreshToken
+	}
+	if refreshToken == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing refresh token"})
 		return
 	}
@@ -120,7 +140,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 	h.setRefreshCookie(c, tokens.RefreshToken)
-	c.JSON(http.StatusOK, gin.H{"accessToken": tokens.AccessToken})
+	c.JSON(http.StatusOK, gin.H{"accessToken": tokens.AccessToken, "refreshToken": tokens.RefreshToken})
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
