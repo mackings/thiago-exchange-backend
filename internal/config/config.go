@@ -13,7 +13,16 @@ type Config struct {
 	JWTSecret       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
-	AllowedOrigin   string
+	// AllowedOrigins is the CORS/WebSocket allowlist — there's more than one
+	// legitimate frontend origin in play at once during this migration
+	// (the custom domain, Netlify's default *.netlify.app subdomain, and
+	// the newer Render-hosted frontend), so this is comma-separated rather
+	// than a single value.
+	AllowedOrigins []string
+	// FrontendURL is the one canonical URL used to build links that go out
+	// in emails (password reset, verify-email) — those need a single
+	// concrete origin, unlike the CORS allowlist above.
+	FrontendURL     string
 	BybitAPIKey     string
 	BybitAPISecret  string
 	BybitBaseURL    string
@@ -24,6 +33,10 @@ type Config struct {
 }
 
 func Load() Config {
+	origins := splitCSV(os.Getenv("ALLOWED_ORIGIN"))
+	if len(origins) == 0 {
+		origins = []string{"http://localhost:3000"}
+	}
 	return Config{
 		Port:            getEnv("PORT", "8080"),
 		MongoURI:        getEnv("MONGO_URI", "mongodb://localhost:27017/thiago_exchange?replicaSet=rs0"),
@@ -31,7 +44,8 @@ func Load() Config {
 		JWTSecret:       getEnv("JWT_SECRET", "dev-secret-change-me"),
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 30 * 24 * time.Hour,
-		AllowedOrigin:   getEnv("ALLOWED_ORIGIN", "http://localhost:3000"),
+		AllowedOrigins:  origins,
+		FrontendURL:     getEnv("FRONTEND_URL", origins[0]),
 		BybitAPIKey:     os.Getenv("BYBIT_API_KEY"),
 		BybitAPISecret:  os.Getenv("BYBIT_API_SECRET"),
 		BybitBaseURL:    getEnv("BYBIT_BASE_URL", "https://api.bybit.com"),

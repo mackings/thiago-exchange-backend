@@ -68,7 +68,7 @@ func main() {
 	}
 
 	// Usecases
-	authSvc := auth.NewService(userRepo, resetRepo, verificationRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.AdminEmails, mailSvc, cfg.AllowedOrigin)
+	authSvc := auth.NewService(userRepo, resetRepo, verificationRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.AdminEmails, mailSvc, cfg.FrontendURL)
 	adsSvc := ads.NewService(adRepo, userRepo)
 	ordersSvc := orders.NewService(orderRepo, adRepo, ledgerRepo, bybitClient, bybitClient, userRepo, mailSvc, whitelistRepo, depositAddressRepo)
 	walletSvc := wallet.NewService(ledgerRepo)
@@ -86,11 +86,11 @@ func main() {
 		KYC:     handlers.NewKYCHandler(kycSvc, localStorage),
 		Dispute: handlers.NewDisputeHandler(disputeSvc),
 		Admin:   handlers.NewAdminHandler(adminSvc),
-		Chat:    handlers.NewChatHandler(chatSvc, hub, userRepo, cfg.AllowedOrigin),
+		Chat:    handlers.NewChatHandler(chatSvc, hub, userRepo, cfg.AllowedOrigins),
 		Upload:  handlers.NewUploadHandler(localStorage),
 	}
 
-	router := deliveryhttp.NewRouter(h, cfg.JWTSecret, cfg.AllowedOrigin)
+	router := deliveryhttp.NewRouter(h, cfg.JWTSecret, cfg.AllowedOrigins)
 	router.Static("/uploads", cfg.StorageDir)
 
 	startKeepAlive(os.Getenv("BACKEND_URL"))

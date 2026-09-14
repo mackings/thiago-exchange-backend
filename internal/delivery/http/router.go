@@ -19,9 +19,9 @@ type Handlers struct {
 	Upload  *handlers.UploadHandler
 }
 
-func NewRouter(h Handlers, jwtSecret, allowedOrigin string) *gin.Engine {
+func NewRouter(h Handlers, jwtSecret string, allowedOrigins []string) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery(), gin.Logger(), middleware.CORS(allowedOrigin))
+	r.Use(gin.Recovery(), gin.Logger(), middleware.CORS(allowedOrigins))
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 

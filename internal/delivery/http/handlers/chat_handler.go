@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -23,11 +24,18 @@ type ChatHandler struct {
 	upgrader websocket.Upgrader
 }
 
-func NewChatHandler(svc *chat.Service, hub *ws.Hub, users domain.UserRepository, allowedOrigin string) *ChatHandler {
+// allowedOrigins mirrors the CORS allowlist (see middleware.CORS) — the
+// WebSocket handshake has its own separate origin check that gorilla/websocket
+// performs itself, so it needs the same multi-origin support.
+func NewChatHandler(svc *chat.Service, hub *ws.Hub, users domain.UserRepository, allowedOrigins []string) *ChatHandler {
+	allowed := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[strings.ToLower(o)] = true
+	}
 	return &ChatHandler{
 		svc: svc, hub: hub, users: users,
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == allowedOrigin },
+			CheckOrigin: func(r *http.Request) bool { return allowed[strings.ToLower(r.Header.Get("Origin"))] },
 		},
 	}
 }
